@@ -66,6 +66,7 @@ import {
 import { getOrCreateUserID } from '../../utils/config.js'
 import {
   CAPPED_DEFAULT_MAX_TOKENS,
+  getContextWindowForModel,
   getModelMaxOutputTokens,
   getSonnet1mExpTreatmentEnabled,
 } from '../../utils/context.js'
@@ -1701,6 +1702,10 @@ async function* queryModel(
       hasThinking,
       isRedactThinkingActive: betasParams.includes(REDACT_THINKING_BETA_HEADER),
       clearAllThinking: false,
+      contextWindowTokens: getContextWindowForModel(
+        retryContext.model,
+        betasParams,
+      ),
     })
 
     const enablePromptCaching =

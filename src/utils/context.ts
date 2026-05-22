@@ -53,6 +53,14 @@ export function modelSupports1M(model: string): boolean {
   )
 }
 
+function hasKnown1mContext(model: string): boolean {
+  if (is1mContextDisabled()) {
+    return false
+  }
+  const canonical = getCanonicalName(model).toLowerCase()
+  return canonical.includes('deepseek-v4-pro')
+}
+
 export function getContextWindowForModel(
   model: string,
   betas?: string[],
@@ -73,6 +81,10 @@ export function getContextWindowForModel(
 
   // [1m] suffix — explicit client-side opt-in, respected over all detection
   if (has1mContext(model)) {
+    return 1_000_000
+  }
+
+  if (hasKnown1mContext(model)) {
     return 1_000_000
   }
 

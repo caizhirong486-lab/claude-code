@@ -13,6 +13,7 @@ import { isEnvTruthy } from '../../utils/envUtils.js'
 
 // Default values for context management strategies
 // Match client-side microcompact token values
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 const DEFAULT_MAX_INPUT_TOKENS = 180_000 // Typical warning threshold
 const DEFAULT_TARGET_INPUT_TOKENS = 40_000 // Keep last 40k tokens like client-side
 
@@ -65,11 +66,13 @@ export function getAPIContextManagement(options?: {
   hasThinking?: boolean
   isRedactThinkingActive?: boolean
   clearAllThinking?: boolean
+  contextWindowTokens?: number
 }): ContextManagementConfig | undefined {
   const {
     hasThinking = false,
     isRedactThinkingActive = false,
     clearAllThinking = false,
+    contextWindowTokens,
   } = options ?? {}
 
   const strategies: ContextEditStrategy[] = []
@@ -98,13 +101,20 @@ export function getAPIContextManagement(options?: {
     return strategies.length > 0 ? { edits: strategies } : undefined
   }
 
+  const scale =
+    contextWindowTokens && contextWindowTokens > 0
+      ? contextWindowTokens / DEFAULT_CONTEXT_WINDOW_TOKENS
+      : 1
+  const defaultTriggerThreshold = Math.round(DEFAULT_MAX_INPUT_TOKENS * scale)
+  const defaultKeepTarget = Math.round(DEFAULT_TARGET_INPUT_TOKENS * scale)
+
   if (useClearToolResults) {
     const triggerThreshold = process.env.API_MAX_INPUT_TOKENS
       ? parseInt(process.env.API_MAX_INPUT_TOKENS, 10)
-      : DEFAULT_MAX_INPUT_TOKENS
+      : defaultTriggerThreshold
     const keepTarget = process.env.API_TARGET_INPUT_TOKENS
       ? parseInt(process.env.API_TARGET_INPUT_TOKENS, 10)
-      : DEFAULT_TARGET_INPUT_TOKENS
+      : defaultKeepTarget
 
     const strategy: ContextEditStrategy = {
       type: 'clear_tool_uses_20250919',
@@ -125,10 +135,10 @@ export function getAPIContextManagement(options?: {
   if (useClearToolUses) {
     const triggerThreshold = process.env.API_MAX_INPUT_TOKENS
       ? parseInt(process.env.API_MAX_INPUT_TOKENS, 10)
-      : DEFAULT_MAX_INPUT_TOKENS
+      : defaultTriggerThreshold
     const keepTarget = process.env.API_TARGET_INPUT_TOKENS
       ? parseInt(process.env.API_TARGET_INPUT_TOKENS, 10)
-      : DEFAULT_TARGET_INPUT_TOKENS
+      : defaultKeepTarget
 
     const strategy: ContextEditStrategy = {
       type: 'clear_tool_uses_20250919',

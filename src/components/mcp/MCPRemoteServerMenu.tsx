@@ -98,6 +98,9 @@ export function MCPRemoteServerMenu({
   // 2. It's connected and has tools (meaning it's working via some auth mechanism)
   const isEffectivelyAuthenticated =
     server.isAuthenticated || (server.client.type === 'connected' && serverToolsCount > 0);
+  const canAuthenticateWithOAuth =
+    server.config.type !== 'claudeai-proxy' &&
+    (Boolean(server.config.oauth) || server.client.type === 'needs-auth' || server.isAuthenticated === true);
 
   const reconnectMcpServer = useMcpReconnect();
 
@@ -591,7 +594,7 @@ export function MCPRemoteServerMenu({
       });
     }
   } else {
-    if (isEffectivelyAuthenticated) {
+    if (canAuthenticateWithOAuth && isEffectivelyAuthenticated) {
       menuOptions.push({
         label: 'Re-authenticate',
         value: 'reauth',
@@ -602,7 +605,7 @@ export function MCPRemoteServerMenu({
       });
     }
 
-    if (!isEffectivelyAuthenticated) {
+    if (canAuthenticateWithOAuth && !isEffectivelyAuthenticated) {
       menuOptions.push({
         label: 'Authenticate',
         value: 'auth',
@@ -657,7 +660,7 @@ export function MCPRemoteServerMenu({
             )}
           </Box>
 
-          {server.transport !== 'claudeai-proxy' && (
+          {server.transport !== 'claudeai-proxy' && server.isAuthenticated !== undefined && (
             <Box>
               <Text bold>Auth: </Text>
               {isEffectivelyAuthenticated ? (

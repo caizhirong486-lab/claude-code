@@ -125,17 +125,19 @@ export function buildMcpProperties(clients: MCPServerConnection[] = [], theme: T
 
   // Summary instead of a full server list — 20+ servers wrapped onto many
   // rows, dominating the Status pane. Show counts by state + /mcp hint.
-  const byState = { connected: 0, pending: 0, needsAuth: 0, failed: 0 };
+  const byState = { connected: 0, pending: 0, needsAuth: 0, disabled: 0, failed: 0 };
   for (const s of servers) {
     if (s.type === 'connected') byState.connected++;
     else if (s.type === 'pending') byState.pending++;
     else if (s.type === 'needs-auth') byState.needsAuth++;
+    else if (s.type === 'disabled') byState.disabled++;
     else byState.failed++;
   }
   const parts: string[] = [];
   if (byState.connected) parts.push(color('success', theme)(`${byState.connected} connected`));
   if (byState.needsAuth) parts.push(color('warning', theme)(`${byState.needsAuth} need auth`));
   if (byState.pending) parts.push(color('inactive', theme)(`${byState.pending} pending`));
+  if (byState.disabled) parts.push(color('inactive', theme)(`${byState.disabled} disabled`));
   if (byState.failed) parts.push(color('error', theme)(`${byState.failed} failed`));
 
   return [

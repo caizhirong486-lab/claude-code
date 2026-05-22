@@ -66,7 +66,10 @@ export function MCPSettings({ onComplete }: Props): React.ReactNode {
             const hasSessionAuth = getSessionIngressAuthToken() !== null && client.type === 'connected';
             const hasToolsAndConnected =
               client.type === 'connected' && filterToolsByServer(mcp.tools, client.name).length > 0;
-            isAuthenticated = Boolean(tokens) || hasSessionAuth || hasToolsAndConnected;
+            const hasOAuthConfig = Boolean((client.config as McpSSEServerConfig | McpHTTPServerConfig).oauth);
+            const mayNeedOAuth = client.type === 'needs-auth';
+            const authenticated = Boolean(tokens) || hasSessionAuth || hasToolsAndConnected;
+            isAuthenticated = authenticated ? true : hasOAuthConfig || mayNeedOAuth ? false : undefined;
           }
 
           const baseInfo = {

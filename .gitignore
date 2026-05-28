@@ -56,3 +56,7 @@ credentials.json
 .test-progress.md
 .squash-tmp/
 .git.*-backup
+
+# Local conversation logs and generated architecture reference exports
+conversation-logs/
+docs/ccb-architecture-reference/

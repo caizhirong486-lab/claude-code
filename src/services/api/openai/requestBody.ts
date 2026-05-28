@@ -6,6 +6,14 @@
 import type { ChatCompletionCreateParamsStreaming } from 'openai/resources/chat/completions/completions.mjs'
 import { isEnvTruthy, isEnvDefinedFalsy } from '../../../utils/envUtils.js'
 
+function getHostname(baseURL: string): string | null {
+  try {
+    return new URL(baseURL).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+}
+
 /**
  * Detect whether thinking mode should be enabled for this model.
  *
@@ -53,6 +61,60 @@ export function resolveOpenAIMaxTokens(
       ? parseInt(process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, 10) || undefined
       : undefined) ??
     upperLimit
+  )
+}
+
+/**
+ * Detect whether the converted OpenAI-format messages contain multimodal image input.
+ */
+export function openAIMessagesContainImageInput(messages: unknown[]): boolean {
+  return messages.some(message => {
+    if (!message || typeof message !== 'object') return false
+    const content = (message as Record<string, unknown>).content
+    if (!Array.isArray(content)) return false
+    return content.some(part => {
+      if (!part || typeof part !== 'object') return false
+      return (part as Record<string, unknown>).type === 'image_url'
+    })
+  })
+}
+
+/**
+ * Whether the current OpenAI-compatible endpoint should be treated as accepting
+ * OpenAI chat-completions image_url message content.
+ *
+ * This is intentionally conservative: only known-failing hosts are blocked.
+ */
+export function openAIEndpointSupportsImageInput(
+  baseURL: string | undefined,
+): boolean {
+  if (!baseURL) return true
+  const hostname = getHostname(baseURL)
+  if (!hostname) return true
+
+  // DeepSeek's current OpenAI-compatible chat.completions path rejects
+  // image_url content blocks with a text-only deserialization error.
+  if (hostname === 'api.deepseek.com') return false
+
+  return true
+}
+
+export function buildOpenAIImageInputCompatError(params: {
+  baseURL?: string
+  model: string
+}): string {
+  const endpoint = params.baseURL ?? 'unknown endpoint'
+  return (
+    `Configured OpenAI-compatible endpoint does not accept image input on this request path. ` +
+    `Endpoint: ${endpoint}. Model: ${params.model}. ` +
+    `This prompt included an image attachment, but the server expects text-only message content. ` +
+    `Remove the image, switch to a vision-capable endpoint/model, or use the Anthropic provider for screenshot analysis.`
+  )
+}
+
+export function isImageInputRejectedOpenAIError(errorMessage: string): boolean {
+  return /unknown variant [`'"]image_url[`'"].*expected [`'"]text[`'"]/i.test(
+    errorMessage,
   )
 }
 

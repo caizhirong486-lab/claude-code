@@ -38,6 +38,10 @@ import {
   isOpenAIThinkingEnabled,
   resolveOpenAIMaxTokens,
   buildOpenAIRequestBody,
+  buildOpenAIImageInputCompatError,
+  isImageInputRejectedOpenAIError,
+  openAIEndpointSupportsImageInput,
+  openAIMessagesContainImageInput,
 } from './requestBody.js'
 import { recordLLMObservation } from '../../../services/langfuse/tracing.js'
 import {
@@ -217,9 +221,10 @@ export async function* queryModelOpenAI(
   StreamEvent | AssistantMessage | SystemAPIErrorMessage,
   void
 > {
+  let openaiModel = ''
   try {
     // 1. Resolve model name
-    const openaiModel = resolveOpenAIModel(options.model)
+    openaiModel = resolveOpenAIModel(options.model)
 
     // 2. Normalize messages using shared preprocessing
     const messagesForAPI = normalizeMessagesForAPI(messages, tools)
@@ -298,6 +303,18 @@ export async function* queryModelOpenAI(
       systemPrompt,
       { enableThinking },
     )
+    const hasImageInput = openAIMessagesContainImageInput(openaiMessages)
+    if (
+      hasImageInput &&
+      !openAIEndpointSupportsImageInput(process.env.OPENAI_BASE_URL)
+    ) {
+      throw new Error(
+        buildOpenAIImageInputCompatError({
+          baseURL: process.env.OPENAI_BASE_URL,
+          model: openaiModel,
+        }),
+      )
+    }
     const openaiTools = anthropicToolsToOpenAI(standardTools)
     const openaiToolChoice = anthropicToolChoiceToOpenAI(options.toolChoice)
     const reasoningEffort = getChatGPTResponsesReasoningEffort(
@@ -533,8 +550,14 @@ export async function* queryModelOpenAI(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     logForDebugging(`[OpenAI] Error: ${errorMessage}`, { level: 'error' })
+    const content = isImageInputRejectedOpenAIError(errorMessage)
+      ? `API Error: ${buildOpenAIImageInputCompatError({
+          baseURL: process.env.OPENAI_BASE_URL,
+          model: openaiModel || 'unknown model',
+        })}`
+      : `API Error: ${errorMessage}`
     yield createAssistantAPIErrorMessage({
-      content: `API Error: ${errorMessage}`,
+      content,
       apiError: 'api_error',
       error: (error instanceof Error
         ? error

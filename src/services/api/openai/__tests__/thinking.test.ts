@@ -1,7 +1,11 @@
 import { describe, expect, test, beforeEach, afterEach, mock } from 'bun:test'
 import {
+  buildOpenAIImageInputCompatError,
   isOpenAIThinkingEnabled,
   buildOpenAIRequestBody,
+  isImageInputRejectedOpenAIError,
+  openAIEndpointSupportsImageInput,
+  openAIMessagesContainImageInput,
 } from '../requestBody.js'
 
 // Re-register envUtils.js with correct isEnvDefinedFalsy and isEnvTruthy to
@@ -289,5 +293,63 @@ describe('buildOpenAIRequestBody — thinking params', () => {
     })
     expect(body.tools).toBeUndefined()
     expect(body.tool_choice).toBeUndefined()
+  })
+})
+
+describe('OpenAI image input compatibility', () => {
+  test('detects image_url content in converted OpenAI messages', () => {
+    expect(
+      openAIMessagesContainImageInput([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'look at this' },
+            {
+              type: 'image_url',
+              image_url: { url: 'data:image/png;base64,AA' },
+            },
+          ],
+        },
+      ]),
+    ).toBe(true)
+  })
+
+  test('ignores text-only OpenAI messages', () => {
+    expect(
+      openAIMessagesContainImageInput([{ role: 'user', content: 'hello' }]),
+    ).toBe(false)
+  })
+
+  test('treats DeepSeek OpenAI-compatible endpoint as text-only for image input', () => {
+    expect(openAIEndpointSupportsImageInput('https://api.deepseek.com')).toBe(
+      false,
+    )
+    expect(
+      openAIEndpointSupportsImageInput('https://api.deepseek.com/v1'),
+    ).toBe(false)
+  })
+
+  test('does not block generic OpenAI-compatible endpoints by default', () => {
+    expect(openAIEndpointSupportsImageInput('https://api.openai.com/v1')).toBe(
+      true,
+    )
+  })
+
+  test('matches provider deserialization error for image_url rejection', () => {
+    expect(
+      isImageInputRejectedOpenAIError(
+        '400 Failed to deserialize the JSON body into the target type: messages[34]: unknown variant `image_url`, expected `text`',
+      ),
+    ).toBe(true)
+  })
+
+  test('builds a user-facing compatibility error', () => {
+    const message = buildOpenAIImageInputCompatError({
+      baseURL: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash',
+    })
+    expect(message).toContain('does not accept image input')
+    expect(message).toContain('https://api.deepseek.com')
+    expect(message).toContain('deepseek-v4-flash')
   })
 })

@@ -144,6 +144,107 @@ function createToolUseContext(): any {
 }
 
 describe('query autonomy/provider boundary', () => {
+  test('predictive autocompact propagates failure counts into the next turn', async () => {
+    const previousDisableAttachments =
+      process.env.CLAUDE_CODE_DISABLE_ATTACHMENTS
+    const previousAutoCompactWindow =
+      process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    process.env.CLAUDE_CODE_DISABLE_ATTACHMENTS = '1'
+    process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '200000'
+    try {
+      const toolUseContext = createToolUseContext()
+      const compactTrackingValues: Array<number | undefined> = []
+      let callCount = 0
+      const deps = {
+        uuid: () => 'query-chain-id',
+        microcompact: async (messages: unknown[]) => ({ messages }),
+        autocompact: async (
+          _messages: unknown[],
+          _toolUseContext: unknown,
+          _cacheSafeParams: unknown,
+          _querySource: unknown,
+          tracking?: { consecutiveFailures?: number },
+        ) => {
+          compactTrackingValues.push(tracking?.consecutiveFailures)
+          return {
+            compactionResult: undefined,
+            consecutiveFailures: (tracking?.consecutiveFailures ?? 0) + 1,
+          }
+        },
+        callModel: async function* () {
+          callCount += 1
+          if (callCount === 1) {
+            yield createToolUseAssistantMessage()
+            return
+          }
+          yield createAssistantAPIErrorMessage({
+            content: 'API Error: provider unavailable',
+            apiError: 'api_error',
+            error: new Error('provider unavailable') as never,
+          })
+        },
+      }
+
+      const generator = query({
+        messages: [
+          createUserMessage({ content: 'previous turn' }),
+          {
+            type: 'assistant',
+            uuid: randomUUID(),
+            timestamp: new Date().toISOString(),
+            message: {
+              id: 'msg_high_usage',
+              type: 'message',
+              role: 'assistant',
+              model: 'test-model',
+              stop_reason: 'end_turn',
+              stop_sequence: null,
+              usage: {
+                input_tokens: 170000,
+                output_tokens: 1,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+              },
+              content: [{ type: 'text', text: 'large context' }],
+            },
+          } as unknown as AssistantMessage,
+          createUserMessage({ content: 'continue with tool use' }),
+        ],
+        systemPrompt: asSystemPrompt([]),
+        userContext: {},
+        systemContext: {},
+        canUseTool: async (_tool, input) => ({
+          behavior: 'allow',
+          updatedInput: input,
+        }),
+        toolUseContext,
+        querySource: 'sdk',
+        maxTurns: 3,
+        deps: deps as never,
+      })
+
+      let next = await generator.next()
+      while (!next.done) {
+        next = await generator.next()
+      }
+
+      expect(compactTrackingValues[0]).toBeUndefined()
+      expect(compactTrackingValues[1]).toBe(1)
+      expect(compactTrackingValues[2]).toBe(2)
+    } finally {
+      if (previousDisableAttachments === undefined) {
+        delete process.env.CLAUDE_CODE_DISABLE_ATTACHMENTS
+      } else {
+        process.env.CLAUDE_CODE_DISABLE_ATTACHMENTS = previousDisableAttachments
+      }
+      if (previousAutoCompactWindow === undefined) {
+        delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+      } else {
+        process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = previousAutoCompactWindow
+      }
+    }
+  })
+
   test('provider api-error messages fail a consumed autonomy run instead of advancing the flow', async () => {
     const previousDisableAttachments =
       process.env.CLAUDE_CODE_DISABLE_ATTACHMENTS

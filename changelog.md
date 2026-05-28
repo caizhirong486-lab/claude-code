@@ -2,6 +2,24 @@
 
 Merged historical source: `F:\CODEX\CC\rollback-backups\github-clean-20260522-023029\changelog.md`
 
+## 2026-05-28 - ChatGPT Responses compact hang fix
+
+- Goal: Prevent ChatGPT Responses sessions from staying busy at `Compacting conversation...` when auto-compact runs on media-heavy history near the context limit.
+- Changed: Sanitized the compact cache-sharing fork context by replacing `image` and `document` content with `[image]` and `[document]` text markers before calling `runForkedAgent`, matching the regular compact fallback path.
+- Changed: Added combined abort handling and a request timeout for the ChatGPT Responses fetch and SSE read path while preserving caller abort signals.
+- Changed: Propagated predictive autocompact failure counts back into query tracking so the compact circuit breaker can stop repeated failed compact attempts.
+- Added tests:
+  - `src/services/api/openai/__tests__/responsesAdapter.test.ts`
+  - `src/services/compact/__tests__/compactMedia.test.ts`
+  - `src/__tests__/queryAutonomyProviderBoundary.test.ts`
+- Verified:
+  - `bun test src\services\api\openai\__tests__\responsesAdapter.test.ts`
+  - `bun test src\services\compact\__tests__`
+  - `bun test src\__tests__\queryAutonomyProviderBoundary.test.ts`
+  - `bun run typecheck`
+  - `bun run build`
+- Note: The literal `bun test src\services\compact\__tests__\*.test.ts` filter did not match under this PowerShell/Bun combination, so the compact suite was run by directory path instead.
+
 ## 2026-05-23 - Workspace root convention
 
 - Goal: Keep Codex git status visible without losing awareness of outer workspace backups and logs.

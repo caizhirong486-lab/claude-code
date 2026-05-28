@@ -226,6 +226,17 @@ export function stripReinjectedAttachments(messages: Message[]): Message[] {
   return messages
 }
 
+export function sanitizeCompactCacheSafeParams(
+  cacheSafeParams: CacheSafeParams,
+): CacheSafeParams {
+  return {
+    ...cacheSafeParams,
+    forkContextMessages: stripImagesFromMessages(
+      stripReinjectedAttachments(cacheSafeParams.forkContextMessages),
+    ),
+  }
+}
+
 export const ERROR_MESSAGE_NOT_ENOUGH_MESSAGES =
   'Not enough messages to compact. Send a few more messages first, then try again.'
 const MAX_PTL_RETRIES = 3
@@ -1221,7 +1232,7 @@ async function streamCompactSummary({
         // since it doesn't share cache with the main thread.
         const result = await runForkedAgent({
           promptMessages: [summaryRequest],
-          cacheSafeParams,
+          cacheSafeParams: sanitizeCompactCacheSafeParams(cacheSafeParams),
           canUseTool: createCompactCanUseTool(),
           querySource: 'compact',
           forkLabel: 'compact',

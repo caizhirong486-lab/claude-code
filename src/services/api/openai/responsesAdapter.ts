@@ -25,6 +25,12 @@ type AnthropicUsage = {
   cache_read_input_tokens: number
 }
 
+type SSEReadResult = Awaited<
+  ReturnType<ReadableStreamDefaultReader<Uint8Array>['read']>
+>
+
+const DEFAULT_CHATGPT_RESPONSES_TIMEOUT_MS = 600 * 1000
+
 function textFromContent(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
@@ -190,34 +196,141 @@ export function buildResponsesRequest(params: {
   }
 }
 
+function getChatGPTResponsesTimeoutMs(): number {
+  const raw =
+    process.env.CHATGPT_RESPONSES_TIMEOUT_MS ?? process.env.API_TIMEOUT_MS
+  const parsed = raw ? parseInt(raw, 10) : NaN
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_CHATGPT_RESPONSES_TIMEOUT_MS
+}
+
+function toAbortError(signal: AbortSignal, fallbackMessage: string): Error {
+  const reason = signal.reason
+  if (reason instanceof Error) return reason
+  if (reason) return new Error(String(reason))
+  return new Error(fallbackMessage)
+}
+
+function createChatGPTResponsesAbortSignal(
+  parentSignal: AbortSignal,
+  timeoutMs: number,
+): {
+  signal: AbortSignal
+  cleanup: () => void
+  getTimeoutError: () => Error | undefined
+} {
+  const controller = new AbortController()
+  let timeoutError: Error | undefined
+  let timeout: ReturnType<typeof setTimeout> | undefined
+
+  const abortFromParent = () => {
+    if (!controller.signal.aborted) {
+      controller.abort(
+        toAbortError(parentSignal, 'ChatGPT Responses API request aborted'),
+      )
+    }
+  }
+
+  if (parentSignal.aborted) {
+    abortFromParent()
+  } else {
+    parentSignal.addEventListener('abort', abortFromParent, { once: true })
+  }
+
+  if (!controller.signal.aborted) {
+    timeout = setTimeout(() => {
+      timeoutError = new Error(
+        `ChatGPT Responses API request timed out after ${timeoutMs}ms`,
+      )
+      if (!controller.signal.aborted) {
+        controller.abort(timeoutError)
+      }
+    }, timeoutMs)
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (timeout) clearTimeout(timeout)
+      parentSignal.removeEventListener('abort', abortFromParent)
+    },
+    getTimeoutError: () => timeoutError,
+  }
+}
+
+async function readSSEChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): Promise<SSEReadResult> {
+  if (signal.aborted) {
+    throw toAbortError(signal, 'ChatGPT Responses API request aborted')
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const cleanup = () => signal.removeEventListener('abort', onAbort)
+    const settle = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback()
+    }
+    const onAbort = () => {
+      const error = toAbortError(
+        signal,
+        'ChatGPT Responses API request aborted',
+      )
+      if (settled) return
+      settled = true
+      cleanup()
+      reader
+        .cancel(error)
+        .catch(() => {})
+        .then(() => reject(error))
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+    reader.read().then(
+      result => settle(() => resolve(result)),
+      error => settle(() => reject(error)),
+    )
+  })
+}
+
 async function* parseSSE(
   response: Response,
+  signal: AbortSignal,
 ): AsyncGenerator<Record<string, unknown>, void> {
   if (!response.body) throw new Error('ChatGPT response did not include a body')
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let splitAt = buffer.indexOf('\n\n')
-    while (splitAt >= 0) {
-      const frame = buffer.slice(0, splitAt)
-      buffer = buffer.slice(splitAt + 2)
-      const data = frame
-        .split(/\r?\n/)
-        .filter(line => line.startsWith('data:'))
-        .map(line => line.slice(5).trimStart())
-        .join('\n')
-      if (data && data !== '[DONE]') {
-        const parsed = JSON.parse(data) as unknown
-        if (parsed && typeof parsed === 'object') {
-          yield parsed as Record<string, unknown>
+  try {
+    while (true) {
+      const { done, value } = await readSSEChunk(reader, signal)
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let splitAt = buffer.indexOf('\n\n')
+      while (splitAt >= 0) {
+        const frame = buffer.slice(0, splitAt)
+        buffer = buffer.slice(splitAt + 2)
+        const data = frame
+          .split(/\r?\n/)
+          .filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).trimStart())
+          .join('\n')
+        if (data && data !== '[DONE]') {
+          const parsed = JSON.parse(data) as unknown
+          if (parsed && typeof parsed === 'object') {
+            yield parsed as Record<string, unknown>
+          }
         }
+        splitAt = buffer.indexOf('\n\n')
       }
-      splitAt = buffer.indexOf('\n\n')
     }
+  } finally {
+    reader.releaseLock()
   }
 }
 
@@ -449,6 +562,10 @@ export async function createChatGPTResponsesStream(params: {
 }): Promise<AsyncIterable<Record<string, unknown>>> {
   const auth = await getValidChatGPTAuth()
   const fetchFn = params.fetchOverride ?? (globalThis.fetch as typeof fetch)
+  const abortState = createChatGPTResponsesAbortSignal(
+    params.signal,
+    getChatGPTResponsesTimeoutMs(),
+  )
   const headers: Record<string, string> = {
     Authorization: `Bearer ${auth.accessToken}`,
     'Content-Type': 'application/json',
@@ -461,20 +578,37 @@ export async function createChatGPTResponsesStream(params: {
   if (auth.accountId) {
     headers['ChatGPT-Account-Id'] = auth.accountId
   }
-  const response = await fetchFn(
-    'https://chatgpt.com/backend-api/codex/responses',
-    {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(params.request),
-      signal: params.signal,
-    },
-  )
+  let response: Response
+  try {
+    response = await fetchFn(
+      'https://chatgpt.com/backend-api/codex/responses',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(params.request),
+        signal: abortState.signal,
+      },
+    )
+  } catch (error) {
+    abortState.cleanup()
+    throw abortState.getTimeoutError() ?? error
+  }
   if (!response.ok) {
     const text = await response.text().catch(() => '')
+    abortState.cleanup()
+    const timeoutError = abortState.getTimeoutError()
+    if (timeoutError) throw timeoutError
     throw new Error(
       `ChatGPT Responses API request failed (${response.status})${text ? `: ${text.slice(0, 500)}` : ''}`,
     )
   }
-  return parseSSE(response)
+  return (async function* () {
+    try {
+      yield* parseSSE(response, abortState.signal)
+    } catch (error) {
+      throw abortState.getTimeoutError() ?? error
+    } finally {
+      abortState.cleanup()
+    }
+  })()
 }

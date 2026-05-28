@@ -2,6 +2,13 @@
 
 Merged historical source: `F:\CODEX\CC\rollback-backups\github-clean-20260522-023029\pitfall.md`
 
+## 2026-05-28 - Responses compact hang outside fallback path
+
+- Symptom: ChatGPT Responses sessions can sit at `Compacting conversation...` after image/document history pushes the conversation near the context limit, even when another model such as DeepSeek can compact successfully.
+- Cause: The regular compact fallback path stripped media blocks, but the cache-sharing fork path still reused raw `forkContextMessages`. The Responses stream also had no independent timeout, and predictive autocompact failures did not persist the updated failure count.
+- Fix: Sanitize cache-sharing compact input, add a combined caller-abort plus timeout signal to the Responses fetch/SSE reader, and write predictive compact failure counts back to query tracking.
+- Prevent: Test both compact paths when changing media handling, and keep failure-count propagation covered so the circuit breaker is not bypassed by predictive compaction.
+
 ## 2026-05-23 - Codex workspace root vs repo root
 
 - Symptom: Selecting `F:\CODEX\CC` keeps outer backups/logs visible but hides git status; selecting `F:\CODEX\CC\claude-code` shows git status but makes outer workspace files less obvious.

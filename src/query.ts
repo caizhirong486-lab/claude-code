@@ -868,6 +868,15 @@ async function* queryLoop(
                 consecutiveFailures: predictiveResult.consecutiveFailures ?? 0,
               }
             : tracking
+        } else if (predictiveResult.consecutiveFailures !== undefined) {
+          tracking = {
+            ...(tracking ?? {
+              compacted: false,
+              turnId: '',
+              turnCounter: 0,
+            }),
+            consecutiveFailures: predictiveResult.consecutiveFailures,
+          }
         }
       }
     }

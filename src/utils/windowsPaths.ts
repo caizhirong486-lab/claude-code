@@ -91,6 +91,49 @@ export function setShellIfWindows(): void {
   }
 }
 
+function getPathEnvKey(env: NodeJS.ProcessEnv): string {
+  return Object.keys(env).find(key => key.toLowerCase() === 'path') ?? 'PATH'
+}
+
+/**
+ * Ensure a Windows child-process environment resolves bare `bash` to Git Bash.
+ * This protects nested hook commands such as `bash script.sh` from falling
+ * through to `C:\Windows\System32\bash.exe` (WSL launcher) via PATH lookup.
+ */
+export function withWindowsGitBashEnv(
+  env: NodeJS.ProcessEnv,
+  gitBashPath: string,
+): NodeJS.ProcessEnv {
+  const gitBashDir = pathWin32.dirname(gitBashPath)
+  const pathKey = getPathEnvKey(env)
+  const pathKeys = Object.keys(env).filter(
+    key => key !== pathKey && key.toLowerCase() === 'path',
+  )
+  const currentPath = env[pathKey]
+  const pathEntries =
+    currentPath?.split(pathWin32.delimiter).filter(Boolean) ?? []
+  const hasGitBashDir = pathEntries.some(
+    entry => entry.toLowerCase() === gitBashDir.toLowerCase(),
+  )
+
+  const nextEnv: NodeJS.ProcessEnv = {
+    ...env,
+    SHELL: gitBashPath,
+    CLAUDE_CODE_GIT_BASH_PATH: gitBashPath,
+    [pathKey]: hasGitBashDir
+      ? currentPath
+      : currentPath
+        ? `${gitBashDir}${pathWin32.delimiter}${currentPath}`
+        : gitBashDir,
+  }
+
+  for (const duplicatePathKey of pathKeys) {
+    delete nextEnv[duplicatePathKey]
+  }
+
+  return nextEnv
+}
+
 /**
  * Find the path where `bash.exe` included with git-bash exists, exiting the process if not found.
  */

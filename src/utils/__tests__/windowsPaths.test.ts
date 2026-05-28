@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { windowsPathToPosixPath, posixPathToWindowsPath } from '../windowsPaths'
+import {
+  posixPathToWindowsPath,
+  windowsPathToPosixPath,
+  withWindowsGitBashEnv,
+} from '../windowsPaths'
 
 // ─── windowsPathToPosixPath ────────────────────────────────────────────
 
@@ -107,5 +111,44 @@ describe('round-trip conversions', () => {
     const win = posixPathToWindowsPath(original)
     const back = windowsPathToPosixPath(win)
     expect(back).toBe(original)
+  })
+})
+
+describe('withWindowsGitBashEnv', () => {
+  test('prepends the Git Bash directory and sets shell variables', () => {
+    const env = withWindowsGitBashEnv(
+      { PATH: 'C:\\Windows\\System32;C:\\Program Files\\Git\\cmd' },
+      'C:\\Program Files\\Git\\bin\\bash.exe',
+    )
+
+    expect(env.PATH).toBe(
+      'C:\\Program Files\\Git\\bin;C:\\Windows\\System32;C:\\Program Files\\Git\\cmd',
+    )
+    expect(env.SHELL).toBe('C:\\Program Files\\Git\\bin\\bash.exe')
+    expect(env.CLAUDE_CODE_GIT_BASH_PATH).toBe(
+      'C:\\Program Files\\Git\\bin\\bash.exe',
+    )
+  })
+
+  test('preserves the existing Path key casing and removes duplicate PATH keys', () => {
+    const env = withWindowsGitBashEnv(
+      {
+        Path: 'C:\\Windows\\System32',
+        PATH: 'C:\\Users\\13186\\bin',
+      },
+      'C:\\Program Files\\Git\\bin\\bash.exe',
+    )
+
+    expect(env.Path).toBe('C:\\Program Files\\Git\\bin;C:\\Windows\\System32')
+    expect(env.PATH).toBeUndefined()
+  })
+
+  test('does not prepend the Git Bash directory twice', () => {
+    const env = withWindowsGitBashEnv(
+      { PATH: 'C:\\Program Files\\Git\\bin;C:\\Windows\\System32' },
+      'C:\\Program Files\\Git\\bin\\bash.exe',
+    )
+
+    expect(env.PATH).toBe('C:\\Program Files\\Git\\bin;C:\\Windows\\System32')
   })
 })

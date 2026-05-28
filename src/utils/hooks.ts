@@ -17,7 +17,11 @@ import {
 } from './sessionEnvironment.js'
 import { subprocessEnv } from './subprocessEnv.js'
 import { getPlatform } from './platform.js'
-import { findGitBashPath, windowsPathToPosixPath } from './windowsPaths.js'
+import {
+  findGitBashPath,
+  withWindowsGitBashEnv,
+  windowsPathToPosixPath,
+} from './windowsPaths.js'
 import { getCachedPowerShellPath } from './shell/powershellDetection.js'
 import { DEFAULT_HOOK_SHELL } from './shell/shellProvider.js'
 import { buildPowerShellArgs } from './shell/powershellProvider.js'
@@ -1020,6 +1024,11 @@ async function execCommandHook(
     )
   }
 
+  const gitBashPath = isWindows && !isPowerShell ? findGitBashPath() : undefined
+  const hookEnvVars = gitBashPath
+    ? withWindowsGitBashEnv(envVars, gitBashPath)
+    : envVars
+
   // --
   // Spawn. Two completely separate paths:
   //
@@ -1099,7 +1108,7 @@ async function execCommandHook(
       )
     }
     child = spawn(pwshPath, buildPowerShellArgs(finalCommand), {
-      env: envVars,
+      env: hookEnvVars,
       cwd: safeCwd,
       // Prevent visible console window on Windows (no-op on other platforms)
       windowsHide: true,
@@ -1107,9 +1116,9 @@ async function execCommandHook(
   } else {
     // On Windows, use Git Bash explicitly (cmd.exe can't run bash syntax).
     // On other platforms, shell: true uses /bin/sh.
-    const shell = isWindows ? findGitBashPath() : true
+    const shell = gitBashPath ?? true
     child = spawn(sandboxedCommand, [], {
-      env: envVars,
+      env: hookEnvVars,
       cwd: safeCwd,
       shell,
       // Prevent visible console window on Windows (no-op on other platforms)
